@@ -28,11 +28,15 @@ Shared by the tests, not a test itself. The contract suite: the same tests, run 
 - merge: disjoint layers are never merged
 - createLayer: orphans under layer segments, leaves only
 - createExecution and deleteBranch: only once merged
+- a deleted branch takes the folders it leaves empty
 - commitTree: a checkpoint replacing the whole tree
 - init: a new, empty, bare repository
 - raw objects: read, write, has
 - importLayer: new under the layer rules, existing only forward
 - merge: conflicts throw
+- isAncestor: which history holds which (a second apart)
+- isAncestor: which history holds which (all in one second)
+- squash: one commit on the target, the branch left as it is
 
 ## `engines.test.js`
 
