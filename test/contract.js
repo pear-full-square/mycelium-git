@@ -45,6 +45,14 @@ export function contract (name, makeBackend) {
     t.alike(await repo.select('/main/nope'), [])
   })
 
+  test(`${name}: find: a file that may not be there`, async (t) => {
+    t.is((await repo.find('/main/readme')).toString(), 'hello', 'there: its content')
+    t.is(await repo.find('/main/nope'), null, 'not there: null')
+    t.is(await repo.find('/nobranch/readme'), null, 'nor its branch')
+    await t.exception(repo.find('/main/docs'), /not a file: \/main\/docs/, 'a folder: not a file, as read says')
+    await t.exception(repo.find('/main/docs/*'), /not a file/, 'several: the same')
+  })
+
   test(`${name}: read`, async (t) => {
     t.is((await repo.read('/main/readme')).toString(), 'hello')
     t.is((await repo.read('/overlay/config/docs/a')).toString(), 'conf')
