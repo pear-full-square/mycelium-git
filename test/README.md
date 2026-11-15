@@ -16,6 +16,7 @@ Shared by the tests, not a test itself. The contract suite: the same tests, run 
 
 - above the branches: name segments
 - into a branch
+- the tree itself, for a query: a node, its children, a file's content
 - find: a file that may not be there
 - read
 - pinned: a repository at a recorded state
