@@ -8,6 +8,7 @@ import { mkdtempSync, existsSync } from 'bare-fs'
 import { join } from 'bare-path'
 import { tmpdir } from 'bare-os'
 import { openRepo, pinned, writer } from '../index.js'
+import { query } from 'mycelium-xpath'
 import { sameName } from 'mycelium-uri'
 
 // A command run to its end (Bare's bare-subprocess has no execFileSync): its
@@ -43,6 +44,21 @@ export function contract (name, makeBackend) {
     t.alike(paths(await repo.select('/*/docs/a')), ['/main/docs/a'])
     t.alike(paths(await repo.select('/*/*/docs/a')), ['/execute/main/docs/a', '/overlay/config/docs/a'])
     t.alike(await repo.select('/main/nope'), [])
+  })
+
+  test(`${name}: the tree itself, for a query: a node, its children, a file's content`, async (t) => {
+    const main = await repo.node('/main')
+    t.is(main.type, 'tree', 'the one node at a plain path')
+    t.alike([await repo.node('/main/nope'), await repo.node('/nobranch'), await repo.node('/main/*')], [null, null, null], 'nothing there, or not one: null')
+    t.alike((await repo.children(main)).map(([n, c]) => [n, c.type]), [['README.md', 'blob'], ['docs', 'tree'], ['readme', 'blob']])
+    const readme = await repo.node('/main/readme')
+    t.alike([await repo.children(readme), (await repo.bytes(readme)).toString()], [null, 'hello'], 'a file: no children, its content')
+    await t.exception(async () => repo.bytes(main), /not a file/)
+    t.alike((await repo.children(await repo.node('/pending'))).map(([n, c]) => [n, c.type]), [['default', 'tree']], 'above the branches too')
+    // a query over it (mycelium-xpath): a file's document its text
+    const tree = { children: repo.children, document: async n => (n.type === 'blob' ? (await repo.bytes(n)).toString() : null) }
+    t.alike((await query(tree, main, "*[a='A']/b")).found.map(f => f.path), ['/docs/b'], 'a filter on a file\'s content, then on')
+    t.alike((await query(tree, await repo.node('/'), "*/*[.='hello']")).found.map(f => f.path), ['/main/readme'], 'from the root, across branches')
   })
 
   test(`${name}: find: a file that may not be there`, async (t) => {

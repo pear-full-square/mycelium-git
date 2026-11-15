@@ -22,7 +22,7 @@ its commit's tree. A name is never both a branch and a prefix, so this is
 unambiguous. `mycelium-xpath` navigates it, `*` steps included:
 `/*/*/docs/a` finds `docs/a` in every two-segment branch.
 
-- `openRepo(backend)` → `{ select(path), read(path), find(path) }`
+- `openRepo(backend)` → `{ select(path), read(path), find(path), node(path), children(node), bytes(node) }`
   - `select(path)` → `[path, node]` pairs; a node is
     `{ type: 'tree' | 'blob', oid }`, or `{ type: 'branches', prefix }`
     above the branches
@@ -30,6 +30,10 @@ unambiguous. `mycelium-xpath` navigates it, `*` steps included:
   - `find(path)` → the same for a file that may not be there: `null`
     when nothing is at `path`; anything else that is not one file throws,
     as `read` does
+  - `node(path)`, `children(node)`, `bytes(node)` → the tree itself, for
+    a query (`mycelium-xpath`'s `query`): the one node at a plain path,
+    `null` when nothing is there; a node's children as `[name, node]`
+    pairs, `null` for a file; a file's content
 - `pinned(backend, state)` → the backend with its branches fixed to the
   commits in `state` (`{ branch: commit }`): a repository at a recorded
   state, such as a unit's
