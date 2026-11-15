@@ -16,6 +16,7 @@ Shared by the tests, not a test itself. The contract suite: the same tests, run 
 
 - above the branches: name segments
 - into a branch
+- find: a file that may not be there
 - read
 - pinned: a repository at a recorded state
 - change: put and remove, one commit
