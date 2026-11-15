@@ -12,4 +12,4 @@ The parts of mycelium-git, a file each, imported by its `index.js`.
 | `repo.js` | A repository as one tree, for mycelium-xpath. |
 | `split.js` | Splitting a folder out of a branch's history, as git subtree split does, on the backend contract, so on every engine: each commit whose folder changed becomes a commit of the folder alone, with the original author, committer and message. |
 | `transfer.js` | Copying objects between repositories: everything a commit reaches, from one backend into another, whatever their engines. |
-| `write.js` | Writing under the rules: a change is a set of puts and removes on one branch, committed as one checkpoint; a merge is a plain merge; branches are created and deleted only as the rules allow. |
+| `write.js` | Writing under the rules: a change is a set of puts and removes on one branch, committed as one checkpoint; a merge is a plain merge, a squash one commit holding what a branch changed; branches are created and deleted only as the rules allow. |

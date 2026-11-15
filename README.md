@@ -2,8 +2,8 @@
 
 Our git, speaking mycelium: the repository rules over a backend contract.
 
-It reads a repository by path from the branch root, and writes changes and
-plain merges under the rules. The rules code uses only the backend contract;
+It reads a repository by path from the branch root, and writes changes,
+plain merges and squashes under the rules. The rules code uses only the backend contract;
 an adapter maps the contract onto one engine: native git, isomorphic-git,
 p2p-git.
 
@@ -37,7 +37,7 @@ unambiguous. `mycelium-xpath` navigates it, `*` steps included:
 
 ## Writing
 
-`writer(backend)` → `{ change, merge }`. Paths are inside the branch and are
+`writer(backend)` → `{ change, merge, squash }`. Paths are inside the branch and are
 stored names, valid when they come in.
 
 - `change(branch)` → `{ put(path, bytes), remove(path), commit(message,
@@ -53,6 +53,14 @@ stored names, valid when they come in.
   layers are never merged, and conflicts throw. `fastForward` lets `into`
   simply move to `from` when it can, for syncing an execution branch,
   never for `main`.
+- `squash(from, into, message, { author, time })`: one commit on `into`
+  holding what `from` changed, its only parent `into`'s head; `from`'s
+  own commits do not enter `into`'s history. `from` is left as it is, as
+  git's squash leaves it: removing it is its owner's. Nothing when `into`
+  already holds `from`, or when `from` changed nothing in the end. Where
+  `into` has not moved since `from` left it, the commit takes `from`'s
+  tree; else the two are merged, and conflicts throw. Disjoint layers are
+  never squashed into each other.
 - `createLayer(name, message, { author, time })`: a new layer, an orphan
   branch whose first commit has an empty tree. Its first segment must be a
   layer's: `main`, `packages` and `runtime` (each on its own), `request`,
@@ -134,9 +142,13 @@ checked on this repository's own history too).
 - Writing: `writeBlob(bytes)`, `writeTree(entries)`,
   `writeCommit({ tree, parents, message, author, time })` → oid;
   `updateBranch(name, oid, expected)`, compare-and-swap (`null`: must not
-  exist); `deleteBranch(name, expected)`, the same
+  exist); `deleteBranch(name, expected)`, the same, and the folders the
+  branch's name leaves empty go with it (a listing of the branches walks
+  what is there)
 - History and merge: `mergeBase(a, b)` → oid or `null`;
-  `isAncestor(a, b)`; `mergeTrees(ours, theirs)` → `{ tree, conflicts }`
+  `isAncestor(a, b)`: is `a` in `b`'s history, found from what the two
+  have apart, not by walking all of `b`'s history;
+  `mergeTrees(ours, theirs)` → `{ tree, conflicts }`
 
 Adapters, one per engine, each run against the same contract suite
 (`test/contract.js`):
@@ -165,6 +177,17 @@ Adapters, one per engine, each run against the same contract suite
   writes. Its merge stores the merged tree only through a real merge, so
   `mergeTrees` leaves an unreferenced merge commit, which git's garbage
   collection removes.
+- The isomorphic-git-style adapter does two things itself, which native
+  git does and the engines do not. A deleted branch takes the folders it
+  leaves empty under `refs/heads` (up to its first segment's folder,
+  which stays): the engines leave them, and their listing of the
+  branches walks every folder, so it slowed with every request done.
+  `isAncestor` walks both histories together, the newest commit first,
+  marking which of the two reaches a commit, and ends when one reaches
+  the other or only commits both reach are left: the engines' own walk
+  goes through the whole history of `b` whenever `a` is not in it, which
+  is what a merge asks every time. Their merge base is not used for it:
+  they give the first commit both reach, not the best one.
 
 Both run on Node and on Bare. On Bare the Node built-ins they use come from
 the `bare-node-*` aliases, which are dependencies of this package; Node

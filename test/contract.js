@@ -4,7 +4,7 @@
 
 import test, { hook } from 'brittle'
 import { spawnSync } from 'bare-subprocess'
-import { mkdtempSync } from 'bare-fs'
+import { mkdtempSync, existsSync } from 'bare-fs'
 import { join } from 'bare-path'
 import { tmpdir } from 'bare-os'
 import { openRepo, pinned, writer } from '../index.js'
@@ -63,9 +63,10 @@ export function contract (name, makeBackend) {
   })
 
   // Writing: a fixture of its own, written in sequence.
-  let wb, wrepo, w
+  let wb, wrepo, w, wdir
   hook(`${name}: its fixture`, async () => {
-    wb = await makeBackend(fixture())
+    wdir = fixture()
+    wb = await makeBackend(wdir)
     wrepo = openRepo(wb)
     w = writer(wb)
   })
@@ -190,6 +191,29 @@ export function contract (name, makeBackend) {
     await t.exception(w.deleteBranch('nope', 'main'), /no branch: nope/)
   })
 
+  // On disk (a Hyperdrive has no folders): what the ref's folders are after.
+  test(`${name}: a deleted branch takes the folders it leaves empty`, async (t) => {
+    const refs = join(wdir, 'refs', 'heads')
+    await w.createExecution('main', 'k1')
+    await wb.updateBranch('execute/k1/request/execute', await head('main'), null)
+    await wb.updateBranch('execute/k2/main', await head('main'), null)
+    // one of two in execute/k1: its own folder goes, execute/k1 stays
+    await wb.deleteBranch('execute/k1/request/execute', await head('execute/k1/request/execute'))
+    t.absent(existsSync(join(refs, 'execute', 'k1', 'request')), 'the folders it alone was in: gone')
+    t.is(await head('execute/k1/main'), await head('main'), 'the branch beside it: there')
+    // the last in execute/k1: the folder goes; execute, the first segment's, stays
+    await wb.deleteBranch('execute/k1/main', await head('execute/k1/main'))
+    t.absent(existsSync(join(refs, 'execute', 'k1')), 'the key\'s folder: gone')
+    t.is(await head('execute/k2/main'), await head('main'), 'another key\'s branch: there')
+    await wb.deleteBranch('execute/k2/main', await head('execute/k2/main'))
+    t.absent(existsSync(join(refs, 'execute', 'k2')))
+    // a branch made where a folder was removed
+    await wb.updateBranch('execute/k1/main', await head('main'), null)
+    t.is(await head('execute/k1/main'), await head('main'), 'made again where its folder was removed')
+    await wb.deleteBranch('execute/k1/main', await head('execute/k1/main'))
+    t.alike((await wb.listBranches()).map(([b]) => b).filter(b => b.startsWith('execute/k')), [])
+  })
+
   test(`${name}: commitTree: a checkpoint replacing the whole tree`, async (t) => {
     const before = await head('data/sets')
     const blob = await wb.writeBlob('only')
@@ -243,5 +267,94 @@ export function contract (name, makeBackend) {
     await b.put('/readme', 'side says')
     await b.commit('b', { author, time })
     await t.exception(w.merge('side', 'main', 'm', { author, time }), /merge conflicts: readme/)
+  })
+
+  // Commits written directly, a second apart and all in one second: the
+  // walk is ordered by date, its answer must not depend on it.
+  for (const [dates, clock] of [['a second apart', n => new Date(Date.UTC(2026, 0, 3, 0, 0, n)).toISOString()], ['all in one second', () => time]]) {
+    test(`${name}: isAncestor: which history holds which (${dates})`, async (t) => {
+      const ab = await makeBackend(fixture())
+      const tree = (await ab.readCommit(Object.fromEntries(await ab.listBranches()).main)).tree
+      let n = 0
+      const commit = (...parents) => ab.writeCommit({ tree, parents, message: `c${n}`, author, time: clock(n++) })
+      const chain = async (from, length) => { const out = []; for (let k = 0; k < length; k++) out.push(from = await commit(from)); return out }
+      const root = await commit()
+      const trunk = await chain(root, 6)
+      const side = await chain(trunk[1], 4) // leaves the trunk early
+      const merged = await commit(trunk[5], side[3])
+      const later = await chain(merged, 3)
+      const apart = await chain(trunk[3], 5) // never merged
+      const yes = async (a, b, what) => t.ok(await ab.isAncestor(a, b), what)
+      const no = async (a, b, what) => t.absent(await ab.isAncestor(a, b), what)
+      await yes(root, root, 'itself')
+      await yes(root, later[2], 'the root, far below')
+      await yes(trunk[5], merged, 'a merge\'s first parent')
+      await yes(side[3], merged, 'a merge\'s second parent')
+      await yes(side[0], later[2], 'through the merge\'s second parent')
+      await no(later[2], side[0], 'the other way round')
+      await no(merged, trunk[5], 'a merge is not in its parent\'s history')
+      await no(side[3], trunk[5], 'a side branch not merged yet')
+      await no(trunk[5], side[3], 'nor the trunk in it')
+      await no(apart[4], later[2], 'diverged: not in the trunk')
+      await no(later[2], apart[4], 'diverged: nor the trunk in it')
+      await yes(trunk[3], apart[4], 'where it left the trunk')
+      // a merge that reaches an old commit directly: nearer than the commit asked about
+      const shortcut = await commit(later[2], root)
+      await yes(side[2], shortcut, 'beyond a nearer common commit')
+      await no(apart[0], shortcut)
+      // unrelated histories
+      const other = await chain(await commit(), 2)
+      await no(other[1], later[2], 'unrelated')
+      await no(later[2], other[1])
+    })
+  }
+
+  // A fixture of its own: what main's history holds is counted.
+  test(`${name}: squash: one commit on the target, the branch left as it is`, async (t) => {
+    const sb = await makeBackend(fixture())
+    const srepo = openRepo(sb)
+    const sw = writer(sb)
+    const at = async b => Object.fromEntries(await sb.listBranches())[b]
+    const read = async p => (await srepo.read(p)).toString()
+    const main = await at('main')
+    // the target not moved: the branch's tree, one parent
+    await sw.createExecution('main', 'k1')
+    for (const n of ['one', 'two']) { const c = await sw.change('execute/k1/main'); await c.put(`/responses/${n}.md`, n); await c.commit(n, { author, time }) }
+    const branch = await at('execute/k1/main')
+    const s1 = await sw.squash('execute/k1/main', 'main', 'k1: squashed', { author, time })
+    t.is(await at('main'), s1)
+    t.alike((await sb.readCommit(s1)).parents, [main], 'one parent: the target\'s head')
+    t.is((await sb.readCommit(s1)).tree, (await sb.readCommit(branch)).tree, 'the branch\'s tree')
+    t.is(await read('/main/responses/two.md'), 'two')
+    t.is(await at('execute/k1/main'), branch, 'the branch left as it is')
+    t.absent(await sb.isAncestor(branch, s1), 'its commits not in the target\'s history')
+    // the target moved meanwhile, other paths: merged, still one parent
+    await sw.createExecution('main', 'k2')
+    const c2 = await sw.change('execute/k2/main'); await c2.put('/responses/three.md', 'three'); await c2.commit('three', { author, time })
+    const m = await sw.change('main'); await m.put('/elsewhere.md', 'meanwhile'); const moved = await m.commit('meanwhile', { author, time })
+    const s2 = await sw.squash('execute/k2/main', 'main', 'k2: squashed', { author, time })
+    t.alike((await sb.readCommit(s2)).parents, [moved])
+    t.is(await read('/main/responses/three.md'), 'three')
+    t.is(await read('/main/elsewhere.md'), 'meanwhile')
+    // the same path on both: conflicts throw, the target stays
+    await sw.createExecution('main', 'k3')
+    const c3 = await sw.change('execute/k3/main'); await c3.put('/readme', 'the branch says'); await c3.commit('branch', { author, time })
+    const m3 = await sw.change('main'); await m3.put('/readme', 'main says'); const stays = await m3.commit('main', { author, time })
+    await t.exception(sw.squash('execute/k3/main', 'main', 'k3', { author, time }), /merge conflicts: readme/)
+    t.is(await at('main'), stays)
+    // nothing to do: the target holds the branch; the branch changed nothing in the end
+    await sw.createExecution('main', 'k4')
+    t.is(await sw.squash('execute/k4/main', 'main', 'k4', { author, time }), stays, 'a branch that did not move')
+    const c4 = await sw.change('execute/k4/main'); await c4.put('/tmp.md', 'x'); await c4.commit('put', { author, time })
+    const d4 = await sw.change('execute/k4/main'); d4.remove('/tmp.md'); await d4.commit('removed again', { author, time })
+    t.is(await sw.squash('execute/k4/main', 'main', 'k4', { author, time }), stays, 'put and removed again: no commit')
+    // disjoint layers, a missing branch
+    await t.exception(sw.squash('pending/default', 'main', 'x', { author, time }), /disjoint layers/)
+    await t.exception(sw.squash('nope', 'main', 'x', { author, time }), /no branch: nope/)
+    // a squashed branch squashed again after more work: only the new work arrives
+    const c1 = await sw.change('execute/k1/main'); await c1.put('/responses/four.md', 'four'); await c1.commit('four', { author, time })
+    await sw.squash('execute/k1/main', 'main', 'k1: again', { author, time })
+    t.is(await read('/main/responses/four.md'), 'four')
+    t.is(await read('/main/readme'), 'main says', 'what the target had meanwhile: kept')
   })
 }
