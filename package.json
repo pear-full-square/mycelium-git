@@ -22,7 +22,6 @@
     "process": "npm:bare-node-process@1.0.1"
   },
   "devDependencies": {
-    "bare-runtime": "1.36.0",
     "brittle": "4.5.0",
     "corestore": "7.16.1",
     "hyperdrive": "13.3.4"
